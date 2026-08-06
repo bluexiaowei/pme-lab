@@ -47,7 +47,14 @@ SDK 单元测试：
 ./gradlew :pme-sdk:testDebugUnitTest
 ```
 
-CI：推送到 `main` 或提 PR 时，GitHub Actions 会跑单元测试并打包 `debug` APK（见 [Actions](https://github.com/bluexiaowei/pme-lab/actions)）。
+CI：推送到 `main` 或提 PR 时，GitHub Actions 会跑单元测试并打包 `debug` APK（见 [Actions](https://github.com/bluexiaowei/pme-lab/actions)，产物在对应 run 的 Artifacts，保留约 14 天）。
+
+**Releases 下载**：打 tag（如 `v0.1.0`）并 push 后，[Release](https://github.com/bluexiaowei/pme-lab/releases) 工作流会自动发布带 APK 的 Release。
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## 使用
 
