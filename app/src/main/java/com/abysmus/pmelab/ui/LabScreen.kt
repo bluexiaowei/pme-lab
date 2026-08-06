@@ -59,6 +59,7 @@ import com.abysmus.pmelab.LabViewModel
 import com.digitalp.pme.sdk.BleScanResult
 import com.digitalp.pme.sdk.PmeDeviceInfo
 import com.digitalp.pme.sdk.PmeDeviceStatus
+import com.digitalp.pme.sdk.PmePatientInfo
 import com.digitalp.pme.sdk.PmePhysioData
 import com.digitalp.pme.sdk.PmeProtocol
 
@@ -143,7 +144,9 @@ fun LabScreen(
                     physio = state.physio,
                     recvCount = state.recvCount,
                     deviceInfo = state.deviceInfo,
-                    deviceStatus = state.deviceStatus
+                    deviceStatus = state.deviceStatus,
+                    bleName = state.bleName,
+                    receivedPatient = state.receivedPatient
                 )
                 2 -> ControlPanel(state = state, vm = vm)
                 else -> LogPanel(logs = state.logs, onClear = vm::clearLogs)
@@ -253,21 +256,38 @@ private fun DataPanel(
     physio: PmePhysioData?,
     recvCount: Int,
     deviceInfo: PmeDeviceInfo?,
-    deviceStatus: PmeDeviceStatus?
+    deviceStatus: PmeDeviceStatus?,
+    bleName: String?,
+    receivedPatient: PmePatientInfo?
 ) {
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
-            if (deviceInfo != null || deviceStatus != null) {
+            if (deviceInfo != null || deviceStatus != null || !bleName.isNullOrBlank() || receivedPatient != null) {
                 Text("设备", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 6.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(bottom = 16.dp)
                 ) {
-                    deviceStatus?.batteryPercent?.let { MetricChip("电量", "$it%") }
-                    deviceStatus?.btState?.let { MetricChip("BT状态", "0x${"%02X".format(it)}") }
-                    deviceInfo?.text?.takeIf { it.isNotBlank() }?.let {
-                        MetricChip("信息", it.take(12))
+                    deviceStatus?.let {
+                        MetricChip("电池", it.batteryLabel)
+                        MetricChip("蓝牙", it.btLabel)
+                    }
+                    deviceInfo?.serialNo?.takeIf { it.isNotBlank() }?.let {
+                        MetricChip("序列号", it.take(16))
+                    }
+                    deviceInfo?.hardwareVersion?.takeIf { it.isNotBlank() }?.let {
+                        MetricChip("硬件", it)
+                    }
+                    deviceInfo?.softwareVersion?.takeIf { it.isNotBlank() }?.let {
+                        MetricChip("软件", it)
+                    }
+                    bleName?.takeIf { it.isNotBlank() }?.let {
+                        MetricChip("广播名", it.take(16))
+                    }
+                    receivedPatient?.let {
+                        MetricChip("病人号", it.patientNo.ifBlank { "—" })
+                        MetricChip("DataId", it.dataId.ifBlank { "—" })
                     }
                 }
             }
@@ -294,25 +314,25 @@ private fun DataPanel(
         } else {
             item {
                 val fields = listOf(
-                    "SpO₂" to format(physio.spo2),
-                    "脉率" to format(physio.pulseRate),
+                    "SpO₂ %" to format(physio.spo2),
+                    "脉率 bpm" to format(physio.pulseRate),
                     "呼吸率" to format(physio.breathRate),
                     "ETCO₂" to format(physio.etco2),
                     "FiCO₂" to format(physio.insco2),
-                    "收缩压" to format(physio.systolicBp),
-                    "舒张压" to format(physio.diastolicBp),
-                    "平均压" to format(physio.meanBp),
-                    "袖带压" to format(physio.cuffPressure),
-                    "心率" to format(physio.heartRate),
-                    "体温" to format(physio.temperature),
-                    "PEF" to format(physio.pef),
-                    "FEV1" to format(physio.fev1),
-                    "FVC" to format(physio.fvc),
-                    "FEV1/FVC" to format(physio.fev1Fvc),
-                    "MEF75" to format(physio.mef75),
-                    "MEF50" to format(physio.mef50),
-                    "MEF25" to format(physio.mef25),
-                    "MMEF" to format(physio.mmef),
+                    "收缩压 mmHg" to format(physio.systolicBp),
+                    "舒张压 mmHg" to format(physio.diastolicBp),
+                    "平均压 mmHg" to format(physio.meanBp),
+                    "袖带压 mmHg" to format(physio.cuffPressure),
+                    "心率 bpm" to format(physio.heartRate),
+                    "体温 ℃" to format(physio.temperature),
+                    "PEF L/min" to format(physio.pef),
+                    "FEV1 L" to format(physio.fev1),
+                    "FVC L" to format(physio.fvc),
+                    "FEV1/FVC %" to format(physio.fev1Fvc),
+                    "MEF75 L/s" to format(physio.mef75),
+                    "MEF50 L/s" to format(physio.mef50),
+                    "MEF25 L/s" to format(physio.mef25),
+                    "MMEF L/s" to format(physio.mmef),
                     "DataId" to physio.dataId.ifBlank { "—" }
                 )
                 FlowRow(
@@ -332,6 +352,7 @@ private fun DataPanel(
 @Composable
 private fun ControlPanel(state: LabUiState, vm: LabViewModel) {
     val patient = state.patient
+    val received = state.receivedPatient
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -340,6 +361,22 @@ private fun ControlPanel(state: LabUiState, vm: LabViewModel) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("病人信息（0x2000）", fontWeight = FontWeight.SemiBold)
+        Text(
+            "协议方向：从机 → 主机（设备上报）。下方展示收到的内容；主机下发仅为实验。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+        )
+
+        if (received == null) {
+            Text(
+                if (state.ready) "尚未收到设备上报的 0x2000" else "连接就绪后等待设备上报",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+            )
+        } else {
+            Text("已收到设备上报", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+        }
+
         OutlinedTextField(
             value = patient.patientNo,
             onValueChange = { v -> vm.updatePatient { it.copy(patientNo = v.take(12)) } },
@@ -400,23 +437,33 @@ private fun ControlPanel(state: LabUiState, vm: LabViewModel) {
                 )
             }
         }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        Text("实验：主机写 0x2000", fontWeight = FontWeight.SemiBold)
+        Text(
+            "固件若只支持上报，下发会被忽略。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("建链时自动下发")
+            Text("建链时实验下发")
             Switch(
-                checked = patient.sendOnConnect,
-                onCheckedChange = { checked -> vm.updatePatient { it.copy(sendOnConnect = checked) } }
+                checked = patient.experimentalSendOnConnect,
+                onCheckedChange = { checked ->
+                    vm.updatePatient { it.copy(experimentalSendOnConnect = checked) }
+                }
             )
         }
-        Button(
-            onClick = vm::sendPatientInfo,
+        OutlinedButton(
+            onClick = vm::sendPatientInfoExperimental,
             enabled = state.ready,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("下发病人信息 0x2000")
+            Text("实验下发当前表单")
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -479,10 +526,10 @@ private fun MetricChip(label: String, value: String) {
         modifier = Modifier
             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp)
-            .width(104.dp)
+            .width(112.dp)
     ) {
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
-        Text(value, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f), maxLines = 2)
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2)
     }
 }
 

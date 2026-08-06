@@ -67,6 +67,7 @@ class BluetoothGattManager(private val context: Context) {
     var onPatientInfo: ((PmePatientInfo) -> Unit)? = null
     var onDeviceInfo: ((PmeDeviceInfo) -> Unit)? = null
     var onDeviceStatus: ((PmeDeviceStatus) -> Unit)? = null
+    var onBleName: ((PmeBleName) -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
     /** 原始收发帧（hex 已格式化前的字节），direction: "TX" / "RX" */
     var onRawFrame: ((direction: String, bytes: ByteArray) -> Unit)? = null
@@ -469,7 +470,7 @@ class BluetoothGattManager(private val context: Context) {
                     PmeProtocol.CMD_DEVICE_INFO -> {
                         val info = PmeProtocol.parseDeviceInfo(frame)
                         if (info != null) {
-                            Log.i(TAG_DATA, "设备信息: ${info.text}")
+                            Log.i(TAG_DATA, "设备信息: ${info.summary}")
                             onDeviceInfo?.invoke(info)
                         }
                         if (needAck) sendAck(frame)
@@ -479,9 +480,17 @@ class BluetoothGattManager(private val context: Context) {
                         if (statusInfo != null) {
                             Log.i(
                                 TAG_DATA,
-                                "设备状态: battery=${statusInfo.batteryPercent} btState=${statusInfo.btState}"
+                                "设备状态: battery=${statusInfo.batteryLabel} bt=${statusInfo.btLabel}"
                             )
                             onDeviceStatus?.invoke(statusInfo)
+                        }
+                        if (needAck) sendAck(frame)
+                    }
+                    PmeProtocol.CMD_BLE_NAME -> {
+                        val bleName = PmeProtocol.parseBleName(frame)
+                        if (bleName != null) {
+                            Log.i(TAG_DATA, "BLE 广播名: ${bleName.name}")
+                            onBleName?.invoke(bleName)
                         }
                         if (needAck) sendAck(frame)
                     }

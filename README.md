@@ -1,5 +1,7 @@
 # PME Lab
 
+[![Android CI](https://github.com/bluexiaowei/pme-lab/actions/workflows/android-ci.yml/badge.svg)](https://github.com/bluexiaowei/pme-lab/actions/workflows/android-ci.yml)
+
 开源的 **PME 呼吸监测设备 BLE 联调工具**（Android）。
 
 用于本地联调：扫描、建链、协议收发、生理数据与设备状态展示。  
@@ -12,11 +14,12 @@
 | 页签 | 能力 |
 |------|------|
 | **扫描** | BLE 扫描（可按广播名过滤，默认 `PME`），点选连接 |
-| **数据** | 展示 `0x2001` 生理数据（`mergePreserve`）；设备信息 / 电量等 |
-| **控制** | 编辑并下发病人信息 `0x2000`；自定义 cmd + hex 参数发令 |
+| **数据** | 展示 `0x2001` 生理数据（`mergePreserve`）；设备信息 / 电池档 / 病人号等 |
+| **控制** | 展示设备上报的病人信息 `0x2000`；实验性主机写；自定义 cmd 发令 |
 | **日志** | GATT / 协议 TX·RX 摘要 |
 
-建链流程摘要：CCCD 订阅 → `0x8001` → 可选 `0x2000` → 周期 `0x8002` → 收 `0x2001`。
+建链流程摘要：CCCD 订阅 → `0x8001` → 周期 `0x8002` → 收 `0x2001` / 设备上报的 `0x2000` 等。  
+（`0x2000` 协议方向为**从机→主机**；主机写入仅为实验，设备可能忽略。）
 
 ## 模块
 
@@ -44,12 +47,14 @@ SDK 单元测试：
 ./gradlew :pme-sdk:testDebugUnitTest
 ```
 
+CI：推送到 `main` 或提 PR 时，GitHub Actions 会跑单元测试并打包 `debug` APK（见 [Actions](https://github.com/bluexiaowei/pme-lab/actions)）。
+
 ## 使用
 
 1. 授予蓝牙权限并打开系统蓝牙  
 2. **扫描** → 开始扫描 → 点选设备  
-3. （可选）先在 **控制** 页编辑病人信息；默认建链时自动下发 `0x2000`  
-4. **数据** 查看实时值；**控制** 可再发 `0x2000` 或自定义命令  
+3. **数据** 查看实时值与设备状态；**控制** 查看设备上报的病人信息  
+4. （可选）**控制** 页可做实验性主机写 `0x2000`，或自定义命令  
 5. **日志** 排查建链 / 写特征 / 帧解析问题  
 
 ## SDK 快速接入
@@ -61,8 +66,10 @@ client.onPhysioData = { data ->
     val merged = data.mergePreserve(prev)
 }
 
-client.onDeviceInfo = { info -> /* info.text */ }
-client.onDeviceStatus = { st -> /* st.batteryPercent / st.btState */ }
+client.onPatientInfo = { info -> /* 设备上报 0x2000 */ }
+client.onDeviceInfo = { info -> /* serialNo / hardwareVersion / softwareVersion */ }
+client.onDeviceStatus = { st -> /* batteryLabel / btLabel（非百分比） */ }
+client.onBleName = { n -> /* n.name */ }
 client.onRawFrame = { direction, bytes -> /* "TX" / "RX" */ }
 
 client.scanner.startScan(
@@ -72,11 +79,12 @@ client.scanner.startScan(
     onScanStopped = { }
 )
 
-client.connect(device, PmePatientInfo(
-    patientNo = "P001", sex = 0, type = 0,
-    heightCm = 170, weightKg = 65, age = 40,
-    dataId = "13800138000"
-))
+// 常规联调：不传病人信息（0x2000 由设备上报）
+client.connect(device)
+
+// 实验：主机写 0x2000（固件可能忽略）
+// client.connect(device, PmePatientInfo(...))
+// client.sendPatientInfo(info)
 
 client.sendRequest(0x1001) // 例：请求设备状态
 client.disconnect()
@@ -86,12 +94,11 @@ client.disconnect()
 
 ## 协议要点（摘要）
 
-公开的互操作要点（便于联调，**非**厂商官方规范全文）：
+公开的互操作要点详见 **[PME呼吸检测数据上报格式.md](PME呼吸检测数据上报格式.md)**。摘要：
 
-- Service `69400001-b5a3-f393-e0a9-e50e24dcca99`
-- Notify `69400002-…` / Write `69400003-…`
-- 固定帧头 12 字节；`dataLen = 4 + params`；帧尾 CRC16（Modbus 风格）
-- 常见命令：`0x8001` 建链、`0x8002` 保活、`0x2000` 病人信息、`0x2001` 生理数据、`0x1000`/`0x1001` 设备信息/状态
+- Service `69400001-…`，Notify `69400002-…`，Write `69400003-…`
+- 固定头 12 字节 + 数据区头 4 字节；`dataLen = 4 + params`；帧尾 CRC16
+- 常见命令：`0x8001` / `0x8002` / `0x2000`（设备→主机） / `0x2001` / `0x1000` / `0x1001`
 - 无效生理字段多为 `0xFFFF`，展示层可用 `mergePreserve` 保留上次有效值
 
 ## 声明与免责
@@ -109,7 +116,7 @@ client.disconnect()
    按 [Apache License 2.0](LICENSE) 以「按现状」提供，不保证协议兼容性、数据正确性或持续可用。
 
 5. **隐私**  
-   联调默认病人信息（如 `LAB0001`）为占位数据。请勿填入真实患者隐私信息并上传日志或截图到公共渠道。
+   联调界面会展示设备上报的病人相关字段。请勿填入真实患者隐私信息并上传日志或截图到公共渠道。
 
 6. **范围**  
    不含厂商私有云、账号体系、患者管理系统等闭源业务；包名中的历史片段不代表与任何商业实体存在隶属关系。

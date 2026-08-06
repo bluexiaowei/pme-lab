@@ -32,7 +32,7 @@ data class PmeFrame(
     val crcValid: Boolean
 )
 
-/** 0x2000 病人信息（协议 5.4，从机→主机；本 App 建链后也可下发绑定） */
+/** 0x2000 病人信息（协议 5.4：从机→主机上报；主机写仅为实验） */
 data class PmePatientInfo(
     val patientNo: String,
     val sex: Int,          // 0 男 / 1 女
@@ -273,24 +273,39 @@ object PmeProtocol {
 
     fun parseDeviceInfo(frame: PmeFrame): PmeDeviceInfo? {
         if (frame.cmdId != CMD_DEVICE_INFO || !frame.crcValid) return null
-        val text = String(frame.params, Charset.forName("UTF-8"))
-            .trimEnd { it == '\u0000' || it <= ' ' }
-        return PmeDeviceInfo(text = text, raw = frame.params.copyOf())
+        val raw = frame.params.copyOf()
+        return if (raw.size >= 40) {
+            val serial = trimFixed(raw.copyOfRange(0, 16))
+            val hw = trimFixed(raw.copyOfRange(16, 22))
+            val sw = trimFixed(raw.copyOfRange(22, 40))
+            PmeDeviceInfo(serialNo = serial, hardwareVersion = hw, softwareVersion = sw, raw = raw)
+        } else {
+            // 短载荷：整段当序列号，便于联调
+            val text = trimFixed(raw)
+            PmeDeviceInfo(serialNo = text, hardwareVersion = "", softwareVersion = "", raw = raw)
+        }
     }
 
     fun parseDeviceStatus(frame: PmeFrame): PmeDeviceStatus? {
         if (frame.cmdId != CMD_DEVICE_STATUS || !frame.crcValid) return null
         val raw = frame.params.copyOf()
         if (raw.isEmpty()) {
-            return PmeDeviceStatus(batteryPercent = null, btState = null, raw = raw)
+            return PmeDeviceStatus(batteryState = null, btState = null, raw = raw)
         }
         val battery = raw[0].toInt() and 0xFF
         val bt = if (raw.size >= 2) raw[1].toInt() and 0xFF else null
         return PmeDeviceStatus(
-            batteryPercent = battery,
+            batteryState = battery,
             btState = bt,
             raw = raw
         )
+    }
+
+    fun parseBleName(frame: PmeFrame): PmeBleName? {
+        if (frame.cmdId != CMD_BLE_NAME || !frame.crcValid) return null
+        val raw = frame.params.copyOf()
+        val name = trimFixed(raw).take(26)
+        return PmeBleName(name = name, raw = raw)
     }
 
     internal fun buildFrame(

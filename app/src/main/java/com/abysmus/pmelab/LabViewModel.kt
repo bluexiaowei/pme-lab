@@ -27,15 +27,18 @@ import java.util.Date
 import java.util.Locale
 
 data class PatientDraft(
-    val patientNo: String = "LAB0001",
+    val patientNo: String = "",
     val sex: Int = 0,
     val type: Int = 0,
-    val heightCm: String = "170",
-    val weightKg: String = "65",
-    val age: String = "40",
-    val dataId: String = "LAB0001",
-    /** 建链时是否自动下发 0x2000 */
-    val sendOnConnect: Boolean = true
+    val heightCm: String = "",
+    val weightKg: String = "",
+    val age: String = "",
+    val dataId: String = "",
+    /**
+     * 实验：建链时主机主动写 0x2000。
+     * 协议原文方向为从机→主机，默认关闭。
+     */
+    val experimentalSendOnConnect: Boolean = false
 ) {
     fun toPatientInfoOrNull(): PmePatientInfo? {
         val h = heightCm.toIntOrNull() ?: return null
@@ -52,6 +55,19 @@ data class PatientDraft(
             dataId = dataId.trim()
         )
     }
+
+    companion object {
+        fun from(info: PmePatientInfo) = PatientDraft(
+            patientNo = info.patientNo,
+            sex = info.sex,
+            type = info.type,
+            heightCm = info.heightCm.toString(),
+            weightKg = info.weightKg.toString(),
+            age = info.age.toString(),
+            dataId = info.dataId,
+            experimentalSendOnConnect = false
+        )
+    }
 }
 
 data class LabUiState(
@@ -65,6 +81,9 @@ data class LabUiState(
     val physio: PmePhysioData? = null,
     val deviceInfo: PmeDeviceInfo? = null,
     val deviceStatus: PmeDeviceStatus? = null,
+    val bleName: String? = null,
+    /** 设备上报的病人信息（协议 0x2000 从机→主机） */
+    val receivedPatient: PmePatientInfo? = null,
     val recvCount: Int = 0,
     val logs: List<String> = emptyList(),
     val filterName: String = "PME",
@@ -100,15 +119,28 @@ class LabViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         client.onPatientInfo = { info ->
-            appendLog("病人信息: ${info.patientNo} / ${info.dataId}")
+            _ui.update {
+                it.copy(
+                    receivedPatient = info,
+                    // 同步到表单便于对照；保留实验开关
+                    patient = PatientDraft.from(info).copy(
+                        experimentalSendOnConnect = it.patient.experimentalSendOnConnect
+                    )
+                )
+            }
+            appendLog("收到病人信息 0x2000: ${info.patientNo} / ${info.dataId}")
         }
         client.onDeviceInfo = { info ->
             _ui.update { it.copy(deviceInfo = info) }
-            appendLog("设备信息: ${info.text.ifBlank { "(空)" }}")
+            appendLog("设备信息: sn=${info.serialNo} hw=${info.hardwareVersion} sw=${info.softwareVersion}")
         }
         client.onDeviceStatus = { status ->
             _ui.update { it.copy(deviceStatus = status) }
-            appendLog("设备状态: 电量=${status.batteryPercent} bt=${status.btState}")
+            appendLog("设备状态: ${status.batteryLabel} / BT ${status.btLabel}")
+        }
+        client.onBleName = { ble ->
+            _ui.update { it.copy(bleName = ble.name) }
+            appendLog("BLE 广播名: ${ble.name}")
         }
         client.onConnectionStateChange = { state ->
             val label = when (state) {
@@ -125,7 +157,9 @@ class LabViewModel(application: Application) : AndroidViewModel(application) {
                     ready = state == PmeClient.STATE_READY,
                     connectedAddress = if (state == PmeClient.STATE_DISCONNECTED) null else it.connectedAddress,
                     deviceInfo = if (state == PmeClient.STATE_DISCONNECTED) null else it.deviceInfo,
-                    deviceStatus = if (state == PmeClient.STATE_DISCONNECTED) null else it.deviceStatus
+                    deviceStatus = if (state == PmeClient.STATE_DISCONNECTED) null else it.deviceStatus,
+                    bleName = if (state == PmeClient.STATE_DISCONNECTED) null else it.bleName,
+                    receivedPatient = if (state == PmeClient.STATE_DISCONNECTED) null else it.receivedPatient
                 )
             }
             appendLog("连接状态 → $label")
@@ -263,9 +297,13 @@ class LabViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val draft = _ui.value.patient
-        val patient = if (draft.sendOnConnect) {
+        val patient = if (draft.experimentalSendOnConnect) {
             draft.toPatientInfoOrNull().also {
-                if (it == null) appendLog("病人信息无效，将不带 0x2000 建链")
+                if (it == null) {
+                    appendLog("实验下发开启但表单无效，建链不带 0x2000")
+                } else {
+                    appendLog("实验：建链时下发 0x2000（协议原文为从机→主机，设备可能忽略）")
+                }
             }
         } else {
             null
@@ -277,6 +315,8 @@ class LabViewModel(application: Application) : AndroidViewModel(application) {
                 physio = null,
                 deviceInfo = null,
                 deviceStatus = null,
+                bleName = null,
+                receivedPatient = null,
                 recvCount = 0,
                 ready = false,
                 connectionLabel = "连接中…",
@@ -294,24 +334,26 @@ class LabViewModel(application: Application) : AndroidViewModel(application) {
                 connectionLabel = "已断开",
                 connectedAddress = null,
                 ready = false,
+                receivedPatient = null,
                 statusHint = "已断开连接"
             )
         }
     }
 
-    fun sendPatientInfo() {
+    /** 实验：主机写 0x2000。协议方向为从机→主机，多数固件可能忽略。 */
+    fun sendPatientInfoExperimental() {
         if (!_ui.value.ready) {
             _ui.update { it.copy(cmdError = "通道未就绪") }
             return
         }
         val info = _ui.value.patient.toPatientInfoOrNull()
         if (info == null) {
-            _ui.update { it.copy(cmdError = "病人信息填写有误") }
+            _ui.update { it.copy(cmdError = "表单填写有误，无法实验下发") }
             return
         }
         client.sendPatientInfo(info)
-        appendLog("下发病人信息 0x2000: ${info.patientNo}")
-        _ui.update { it.copy(statusHint = "已下发病人信息", cmdError = null) }
+        appendLog("实验下发 0x2000: ${info.patientNo}（设备可能忽略）")
+        _ui.update { it.copy(statusHint = "已发送实验 0x2000", cmdError = null) }
     }
 
     fun sendPreset(cmdId: Int) {

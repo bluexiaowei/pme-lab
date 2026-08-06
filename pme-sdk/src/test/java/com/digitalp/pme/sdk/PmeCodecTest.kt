@@ -199,36 +199,69 @@ class PmeDataExtractorTest {
 class PmeDeviceParseTest {
 
     @Test
-    fun parseDeviceInfo_readsUtf8Text() {
+    fun parseDeviceInfo_structured40Bytes() {
+        val codec = PmeCodec()
+        val params = ByteArray(40).also { buf ->
+            "SN-ABC123".toByteArray().copyInto(buf, 0)
+            "HW1.0".toByteArray().copyInto(buf, 16)
+            "V1.0.0.1".toByteArray().copyInto(buf, 22)
+        }
+        val frame = codec.feed(codec.buildRequest(PmeProtocol.CMD_DEVICE_INFO, params)).single()
+        val info = PmeProtocol.parseDeviceInfo(frame)!!
+        assertEquals("SN-ABC123", info.serialNo)
+        assertEquals("HW1.0", info.hardwareVersion)
+        assertEquals("V1.0.0.1", info.softwareVersion)
+    }
+
+    @Test
+    fun parseDeviceInfo_shortPayloadAsSerial() {
         val codec = PmeCodec()
         val payload = "PME-V1.2\u0000".toByteArray()
         val frame = codec.feed(codec.buildRequest(PmeProtocol.CMD_DEVICE_INFO, payload)).single()
         val info = PmeProtocol.parseDeviceInfo(frame)
         assertNotNull(info)
-        assertEquals("PME-V1.2", info!!.text)
+        assertEquals("PME-V1.2", info!!.serialNo)
     }
 
     @Test
-    fun parseDeviceStatus_readsBatteryAndBt() {
+    fun parseDeviceStatus_readsBatteryEnumAndBt() {
         val codec = PmeCodec()
         val frame = codec.feed(
-            codec.buildRequest(PmeProtocol.CMD_DEVICE_STATUS, byteArrayOf(85, 0x01, 0x00))
+            codec.buildRequest(PmeProtocol.CMD_DEVICE_STATUS, byteArrayOf(0, 0x01))
         ).single()
-        val status = PmeProtocol.parseDeviceStatus(frame)
-        assertNotNull(status)
-        assertEquals(85, status!!.batteryPercent)
-        assertEquals(0x01, status.btState)
-        assertEquals(3, status.raw.size)
+        val status = PmeProtocol.parseDeviceStatus(frame)!!
+        assertEquals(0, status.batteryState)
+        assertEquals("档位4", status.batteryLabel)
+        assertEquals(1, status.btState)
+        assertEquals("未连接", status.btLabel)
+    }
+
+    @Test
+    fun parseDeviceStatus_chargingLabel() {
+        val status = PmeDeviceStatus(batteryState = 7, btState = 0, raw = byteArrayOf(7, 0))
+        assertEquals("充电2", status.batteryLabel)
+        assertEquals("已连接", status.btLabel)
     }
 
     @Test
     fun parseDeviceStatus_handlesSingleByte() {
         val codec = PmeCodec()
         val frame = codec.feed(
-            codec.buildRequest(PmeProtocol.CMD_DEVICE_STATUS, byteArrayOf(42))
+            codec.buildRequest(PmeProtocol.CMD_DEVICE_STATUS, byteArrayOf(4))
         ).single()
         val status = PmeProtocol.parseDeviceStatus(frame)!!
-        assertEquals(42, status.batteryPercent)
+        assertEquals(4, status.batteryState)
+        assertEquals("档位0", status.batteryLabel)
         assertNull(status.btState)
+    }
+
+    @Test
+    fun parseBleName() {
+        val codec = PmeCodec()
+        val frame = codec.feed(
+            codec.buildRequest(PmeProtocol.CMD_BLE_NAME, "PME-Lab\u0000".toByteArray())
+        ).single()
+        val name = PmeProtocol.parseBleName(frame)!!
+        assertEquals("PME-Lab", name.name)
     }
 }

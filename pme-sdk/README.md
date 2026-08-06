@@ -25,8 +25,13 @@ client.onPhysioData = { data ->
     // SpO2 / 血压 / 体温等；无效字段为 null，可用 mergePreserve 保留上次值
 }
 
-client.onDeviceInfo = { info -> /* info.text */ }
-client.onDeviceStatus = { st -> /* st.batteryPercent / st.btState */ }
+client.onPatientInfo = { info ->
+    // 0x2000：协议为从机→主机上报
+}
+
+client.onDeviceInfo = { info -> /* serialNo / hardwareVersion / softwareVersion */ }
+client.onDeviceStatus = { st -> /* batteryLabel / btLabel（电池为档位枚举，非 %） */ }
+client.onBleName = { n -> /* n.name */ }
 client.onRawFrame = { direction, bytes -> /* TX / RX */ }
 
 client.scanner.startScan(
@@ -36,13 +41,13 @@ client.scanner.startScan(
     onScanStopped = { }
 )
 
-client.connect(bluetoothDevice, PmePatientInfo(
-    patientNo = "P001", sex = 0, type = 0,
-    heightCm = 170, weightKg = 65, age = 40,
-    dataId = "13800138000"
-))
+// 常规：建链即可，病人信息等设备上报
+client.connect(bluetoothDevice)
 
-client.sendPatientInfo(/* 建链后可再次下发 */)
+// 实验：主机写 0x2000（固件可能忽略）
+// client.connect(device, PmePatientInfo(...))
+// client.sendPatientInfo(info)
+
 client.sendRequest(0x1000)
 client.disconnect()
 ```
@@ -57,7 +62,8 @@ client.disconnect()
 | `PmeCodec` | 每连接一份的粘包缓冲与序号 |
 | `PmeProtocol` | 常量 / CRC / 病人·设备编解码 |
 | `PmePhysioData` | 0x2001 生理数据 |
-| `PmeDeviceInfo` / `PmeDeviceStatus` | 0x1000 / 0x1001 |
+| `PmePatientInfo` | 0x2000 病人信息（以设备上报为主） |
+| `PmeDeviceInfo` / `PmeDeviceStatus` / `PmeBleName` | 0x1000 / 0x1001 / 0x1100 |
 
 Host App 需在运行时申请蓝牙权限（本模块 Manifest 已声明，会合并进 App）。
 

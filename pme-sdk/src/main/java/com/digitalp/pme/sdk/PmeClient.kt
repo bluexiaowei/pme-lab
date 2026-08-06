@@ -42,6 +42,10 @@ class PmeClient(context: Context) {
         get() = gattManager.onDeviceStatus
         set(value) { gattManager.onDeviceStatus = value }
 
+    var onBleName: ((PmeBleName) -> Unit)?
+        get() = gattManager.onBleName
+        set(value) { gattManager.onBleName = value }
+
     var onLog: ((String) -> Unit)?
         get() = gattManager.onLog
         set(value) { gattManager.onLog = value }
@@ -52,7 +56,8 @@ class PmeClient(context: Context) {
         set(value) { gattManager.onRawFrame = value }
 
     /**
-     * 连接设备：自动 CCCD 订阅 → 0x8001 建链 → 可选下发 0x2000 → 周期 0x8002 → 收 0x2001。
+     * 连接设备：自动 CCCD 订阅 → 0x8001 建链 → 周期 0x8002 → 收 0x2001 等。
+     * @param patientInfo 可选；仅当需要实验性主机写 0x2000 时传入（协议原文为从机→主机）。
      */
     fun connect(device: BluetoothDevice, patientInfo: PmePatientInfo? = null) {
         val params = patientInfo?.let { PmeProtocol.buildPatientInfoParams(it) }
